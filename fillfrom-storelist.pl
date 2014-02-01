@@ -17,7 +17,7 @@ my @array=<FILE>;
 close FILE;
 
 
-for (my $count = 0; $count < 50; $count++) {
+for (my $count = 0; $count < $Njobs; $count++) {
    my $randomline=$array[rand @array];
    chomp $randomline;
 
