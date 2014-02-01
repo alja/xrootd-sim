@@ -418,7 +418,7 @@ void App::CmsClientSim()
 
     // AMT
     if (mNvread) {
-       if (bVerbose) printf(" vector read  from client,  %d x %d \n",mNvread,  vreq);
+
        int vreq = req/mNvread;
        for (int v=0; v<mNvread; ++v) {
           vecOff[v] = offset + vreq*v; 
@@ -426,7 +426,7 @@ void App::CmsClientSim()
           //  printf("[%d] readv req off = %lld , size = %d",v, vecOff[v],  vecReq[v]);
        }
 
-
+       if (bVerbose) printf(" vector read  from client,  %d x %d \n",mNvread,  vreq);
        c->ReadV(&buf[0], vecOff, vecReq, mNvread);
     }
     else
