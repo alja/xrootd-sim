@@ -2,14 +2,32 @@
 
 use strict;
 
+
+use Getopt::Long;
+
 if (@ARGV < 3) {
-    print STDERR "Usage: xrdfragcp  XrdServer Njobs $0 \n";
+    print STDERR "Usage: xrdfragcp  --server=<> --jobs<> --file<> --vread=<int> verbose newcl \n";
     exit 1;
 }
 
-my $server = $ARGV[0];
-my $Njobs  = $ARGV[1];
-my $file   = $ARGV[2]; 
+my $server  = "";
+my $jobs   = "0";
+my $file    = "";
+my $verbose = "";
+my $vread   = 0;
+my $newcl= 0;
+
+my $sim_path = "$ENV{HOME}/xrd/sim";
+
+
+my $result = GetOptions ("server=s" => \$server,
+                       "jobs=i"   => \$jobs,
+                       "file=s"   => \$file,      # string
+                       "vread=i"   => \$vread,      # string
+                       "newcl"   => \$newcl,      # string
+                       "verbose"  => \$verbose);  # flag
+
+
 
 open(INFO, $file) or die("Could not open file $file.");
 
@@ -17,15 +35,14 @@ open FILE, "<$file" or die "Could not open $file: $!\n";
 my @array=<FILE>;
 close FILE;
 
-# passing xrdfragcp options
-my $vread_enabled=0;
-my $newcl= 0;
 
+if ($verbose) {
+  $verbose = "--verbose";
+}
 
-my $vread;
-if($vread_enabled) {
+if($vread) {
   print("vread enabled\n");
-  my $vread= "--vread 128"
+  $vread=" --vread $vread";
 }
 
 my $fragcpcmd;
@@ -33,23 +50,23 @@ if ($newcl) {
   my $ldpath = "/home/alja/xrd/bld/ixrd/lib64/";
   if (-e $ldpath) {
     $ENV{"LD_LIBRARY_PATH"} = $ldpath;
-    $fragcpcmd = "$ENV{HOME}/xrd/sim/xrdfragcpnew"
+    $fragcpcmd = "$sim_path/xrdfragcpnew"
   }
 }
 else {
-  $fragcpcmd = "$ENV{HOME}/xrd/sim/xrdfragcp"
+  $fragcpcmd = "$sim_path/xrdfragcp"
 }
 
-for (my $count = 0; $count < $Njobs; $count++) {
+for (my $count = 0; $count < $jobs; $count++) {
    my $randomline=$array[rand @array];
    chomp $randomline;
 
    my $cmd;
    
-       $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread root://$server//store/".$randomline." &";
+   $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose root://$server//store/".$randomline." &";
 
     print (localtime, " $cmd \n");
-    system(" $cmd");
-    sleep(1);
+  #  system(" $cmd");
+    sleep(2);
 #   last;
 }
