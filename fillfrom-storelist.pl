@@ -66,7 +66,7 @@ for (my $count = 0; $count < $jobs; $count++) {
    $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose root://$server//store/".$randomline." &";
 
     print (localtime, " $cmd \n");
-  #  system(" $cmd");
+    system(" $cmd");
     sleep(2);
 #   last;
 }
