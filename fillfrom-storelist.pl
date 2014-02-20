@@ -14,7 +14,7 @@ my $server  = "";
 my $jobs   = "0";
 my $file    = "";
 my $verbose = "";
-my $vread   = 0;
+my $vread   = "";
 my $newcl= 0;
 my $sleepTime = 2;
 
