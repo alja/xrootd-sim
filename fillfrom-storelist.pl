@@ -6,7 +6,7 @@ use strict;
 use Getopt::Long;
 
 if (@ARGV < 3) {
-    print STDERR "Usage: xrdfragcp  --server=<> --jobs<> --file<> --vread=<int> verbose newcl \n";
+    print STDERR "Usage: xrdfragcp  --server=<> --jobs<> --file<> --vread=<int> --verbose --newcl --sleep<int> \n";
     exit 1;
 }
 
@@ -16,6 +16,7 @@ my $file    = "";
 my $verbose = "";
 my $vread   = 0;
 my $newcl= 0;
+my $sleepTime = 2;
 
 my $sim_path = "$ENV{HOME}/xrd/sim";
 
@@ -24,6 +25,7 @@ my $result = GetOptions ("server=s" => \$server,
                        "jobs=i"   => \$jobs,
                        "file=s"   => \$file,      # string
                        "vread=i"   => \$vread,      # string
+                       "sleep=i"   => \$sleepTime,      # string
                        "newcl"   => \$newcl,      # string
                        "verbose"  => \$verbose);  # flag
 
@@ -67,6 +69,6 @@ for (my $count = 0; $count < $jobs; $count++) {
 
     print (localtime, " $cmd \n");
     system(" $cmd");
-    sleep(2);
+    sleep($sleepTime);
 #   last;
 }
