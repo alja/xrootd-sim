@@ -431,8 +431,13 @@ void App::CmsClientSim()
     }
     else
     {
-       printf("plain read  from client req = $d \n", req);
+       printf("plain read  from client req = %d \n", req);
        c->Read(&buf[0], offset, req);
+    }
+
+    if (req < 0) {
+       printf("Read exited with error %d \n", req);
+       exit(1);
     }
 
     offset += req;
