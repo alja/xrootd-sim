@@ -15,6 +15,7 @@ my $jobs   = "0";
 my $file    = "";
 my $verbose = "";
 my $vread   = "";
+my $random   = true;
 my $newcl= 0;
 my $sleepTime = 2;
 
@@ -27,6 +28,7 @@ my $result = GetOptions ("server=s" => \$server,
                        "vread=i"   => \$vread,      # string
                        "sleep=i"   => \$sleepTime,      # string
                        "newcl"   => \$newcl,      # string
+                       "random"  => \$random,                  
                        "verbose"  => \$verbose);  # flag
 
 
@@ -60,15 +62,23 @@ else {
 }
 
 for (my $count = 0; $count < $jobs; $count++) {
-   my $randomline=$array[rand @array];
-   chomp $randomline;
+  my $line_idx;
+  if ($random) {
+    $line_idx = rand @array;
+  }
+  else {
+    $line_idx = $count;
+  }
 
-   my $cmd;
-   
-   $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose root://$server//store/".$randomline." &";
+  my $randomline =$array[$line_idx]; #rand @array];
+  chomp $randomline;
 
-    print (localtime, " $cmd \n");
-    system(" $cmd");
-    sleep($sleepTime);
+  my $cmd;
+  
+  $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose root://$server//store/".$randomline." &";
+
+  print (localtime, " $cmd \n");
+  system(" $cmd");
+  sleep($sleepTime);
 #   last;
 }
