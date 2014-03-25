@@ -15,21 +15,26 @@ my $jobs   = "0";
 my $file    = "";
 my $verbose = "";
 my $vread   = "";
-my $random   = true;
+my $ordered   = 0;
 my $newcl= 0;
 my $sleepTime = 2;
+my $list_offset = 0;
+my $list_size = 0;
+
 
 my $sim_path = "$ENV{HOME}/xrd/sim";
 
 
 my $result = GetOptions ("server=s" => \$server,
                        "jobs=i"   => \$jobs,
-                       "file=s"   => \$file,      # string
-                       "vread=i"   => \$vread,      # string
-                       "sleep=i"   => \$sleepTime,      # string
-                       "newcl"   => \$newcl,      # string
-                       "random"  => \$random,                  
-                       "verbose"  => \$verbose);  # flag
+                       "file=s"   => \$file, 
+                       "vread=i"   => \$vread,
+                       "sleep=i"   => \$sleepTime,
+                       "list_offset=i"   => \$list_offset,
+                       "list_size=i"   => \$list_size,
+                       "newcl"   => \$newcl,
+                       "ordered"  => \$ordered,                  
+                       "verbose"  => \$verbose);
 
 
 
@@ -39,6 +44,10 @@ open FILE, "<$file" or die "Could not open $file: $!\n";
 my @array=<FILE>;
 close FILE;
 
+if (!$list_size)
+{
+  $list_size = @array;
+}
 
 if ($verbose) {
   $verbose = "--verbose";
@@ -54,31 +63,33 @@ if ($newcl) {
   my $ldpath = "/home/alja/xrd/bld/ixrd/lib64/";
   if (-e $ldpath) {
     $ENV{"LD_LIBRARY_PATH"} = $ldpath;
-    $fragcpcmd = "$sim_path/xrdfragcpnew"
+    $fragcpcmd = "$sim_path/xrdfragcpnew";
   }
 }
 else {
-  $fragcpcmd = "$sim_path/xrdfragcp"
+  $fragcpcmd = "$sim_path/xrdfragcp";
 }
 
 for (my $count = 0; $count < $jobs; $count++) {
   my $line_idx;
-  if ($random) {
-    $line_idx = rand @array;
-  }
-  else {
+  if ($ordered) {
     $line_idx = $count;
   }
+  else {
+    $line_idx = rand $list_size;
+  }
 
-  my $randomline =$array[$line_idx]; #rand @array];
-  chomp $randomline;
+  $line_idx += $list_offset;
+
+  my $line =$array[$line_idx]; #rand @array];
+  chomp $line;
 
   my $cmd;
   
-  $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose root://$server//store/".$randomline." &";
+  $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose root://$server//store/".$line." &";
 
   print (localtime, " $cmd \n");
-  system(" $cmd");
+ # system(" $cmd");
   sleep($sleepTime);
 #   last;
 }
