@@ -224,7 +224,7 @@ void App::ParseArgs()
       else if (*i == "--random")
       {
          bRandom = true;
-         printf("Random offsets enabled.");
+         if (bVerbose) printf("Random offsets enabled.");
          mArgs.erase(start, ++i);
       }
       else
@@ -452,7 +452,7 @@ void App::CmsClientSim()
       }
       else
       {
-         printf("plain read  from client %lld@%d \n", offset, req);
+         if (bVerbose) printf("plain read  from client %lld@%d \n", offset, req);
          c->Read(&buf[0], offset, req);
       }
 
