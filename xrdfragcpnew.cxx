@@ -9,6 +9,9 @@
 
 
 #include "XrdCl/XrdClFile.hh"
+#include "XrdCl/XrdClXRootDResponses.hh"
+#include "XrdSys/XrdSysPthread.hh"
+#include "XrdSys/XrdSysTimer.hh"
 
 #include <pcrecpp.h>
 
@@ -41,6 +44,65 @@ struct Frag
 
 typedef std::list<Frag>   lFrag_t;
 typedef lFrag_t::iterator lFrag_i;
+
+
+
+class DirectResponseHandler : public XrdCl::ResponseHandler
+{
+public:
+   XrdSysCondVar  m_cond;
+   bool           m_reading;
+   bool           m_detached;
+
+   DirectResponseHandler() :
+      m_cond(0), m_reading(false), m_detached(false)
+   {}
+
+   // Lock under lock? Depends if need more ops
+   void Detach()
+   {
+      m_cond.Lock();
+      // lock (or be locked)
+      m_detached = true;
+
+      if (m_reading)
+         m_cond.Signal();
+
+      m_cond.UnLock();
+   }
+
+   void PreRead()
+   {
+      m_cond.Lock();
+      m_reading = true;
+   }
+
+   void PostRead()
+   {
+      m_cond.Wait();
+      m_reading = false;
+      m_cond.UnLock();
+   }
+
+   void HandleResponse(XrdCl::XRootDStatus *status,
+                       XrdCl::AnyObject    *response)
+   {
+      bool auto_destruct;
+      {
+         XrdSysCondVarHelper _lck(m_cond);
+
+         m_cond.Signal();
+
+         delete status;
+         delete response;
+
+         auto_destruct = m_detached;
+      }
+      if (auto_destruct)
+         delete this;
+   }
+};
+
 
 //==============================================================================
 
@@ -313,152 +375,140 @@ void App::GetFrags()
 
 //------------------------------------------------------------------------------
 
-void App::GetChecksum()
+void* asyncTest(void* v)
 {
-
-    printf( "AMT no imeple,\n");
+   DirectResponseHandler* rh = (DirectResponseHandler*)v;
+   XrdSysTimer::Wait(10);
+   printf("ASYNC TEST !!!!!\n");
+   rh->Detach();
 }
-
-//------------------------------------------------------------------------------
 
 void App::CmsClientSim()
 {
-    using namespace XrdCl;
+   using namespace XrdCl;
 
-    File * clFile = new XrdCl::File();
-    OpenFlags::Flags XOflags =  XrdCl::OpenFlags::Read;
-    XRootDStatus Status =  clFile->Open(mUrl, XOflags);
-    if (Status.IsOK() == false) {
-       printf("Error opennig file %s\n", mUrl.c_str());
-    }
+   DirectResponseHandler* rh = new DirectResponseHandler();
 
-    XrdCl::StatInfo *sInfo = 0;
-    XRootDStatus StatusS = clFile->Stat(true, sInfo);
-    if (!Status.IsOK()) {
-       printf("Can't get status for %s \n", mUrl.c_str());
-       exit(1);
-    }
+   File * clFile = new XrdCl::File();
+   OpenFlags::Flags XOflags =  XrdCl::OpenFlags::Read;
+   XRootDStatus Status =  clFile->Open(mUrl, XOflags);
+   if (Status.IsOK() == false) {
+      printf("Error opennig file %s\n", mUrl.c_str());
+   }
 
+   XrdCl::StatInfo *sInfo = 0;
+   XRootDStatus StatusS = clFile->Stat(true, sInfo);
+   if (!Status.IsOK()) {
+      printf("Can't get status for %s \n", mUrl.c_str());
+      exit(1);
+   }
 
-    long long request_size = mCcsBytesToRead / mCcsNReqs;
-    if (request_size > 128*1024*1024)
-    {
-        fprintf(stderr, "Error: request size (%lld) larger than 128MB.\n", request_size);
-        exit(1);
-    }
-    if (request_size <= 0)
-    {
-        fprintf(stderr, "Error: request size (%lld) non-positive.\n", request_size);
-        exit(1);
-    }
-    if (request_size > sInfo->GetSize())
-    {
-        fprintf(stderr, "Error: request size (%lld) larger than file size (%lld).\n", request_size, sInfo->GetSize());
-        exit(1);
-    }
+ 
 
-    long long usleep_time = 1000000 * ((double)mCcsTotalTime / mCcsNReqs);
-    if (usleep_time < 0)
-    {
-        fprintf(stderr, "Error: sleeptime (%lldmus) negative.\n", usleep_time);
-        exit(1);
-    }
+   long long request_size = mCcsBytesToRead / mCcsNReqs;
+   if (request_size > 128*1024*1024)
+   {
+      fprintf(stderr, "Error: request size (%lld) larger than 128MB.\n", request_size);
+      exit(1);
+   }
+   if (request_size <= 0)
+   {
+      fprintf(stderr, "Error: request size (%lld) non-positive.\n", request_size);
+      exit(1);
+   }
+   if (request_size > sInfo->GetSize())
+   {
+      fprintf(stderr, "Error: request size (%lld) larger than file size (%lld).\n", request_size, sInfo->GetSize());
+      exit(1);
+   }
 
-    std::vector<char> buf;
-    buf.reserve(request_size);
+   long long usleep_time = 1000000 * ((double)mCcsTotalTime / mCcsNReqs);
+   if (usleep_time < 0)
+   {
+      fprintf(stderr, "Error: sleeptime (%lldmus) negative.\n", usleep_time);
+      exit(1);
+   }
 
-    long long offset = 0;
-    long long toread = mCcsBytesToRead;
+   std::vector<char> buf;
+   buf.reserve(request_size);
 
-    int* vecReq = 0;
-    kXR_int64* vecOff = 0;
-    if (mNvread) {
-        vecReq = new int[mNvread];
-        vecOff = new kXR_int64[mNvread];
-    }
+   long long offset = 0;
+   long long toread = mCcsBytesToRead;
 
-    // if (bVerbose)
-    {
-        printf("Starting CmsClientSimNew, %f MB to read in about %lld requests spaced by %.1f seconds.\n",
-               toread/1024.0/1024.0, mCcsNReqs, usleep_time/1000000.0);
-    }
+   int* vecReq = 0;
+   kXR_int64* vecOff = 0;
+   if (mNvread) {
+      vecReq = new int[mNvread];
+      vecOff = new kXR_int64[mNvread];
+   }
 
-    int count = 0;
+   // if (bVerbose)
+   {
+      printf("Starting CmsClientSimNew, %f MB to read in about %lld requests spaced by %.1f seconds.\n",
+             toread/1024.0/1024.0, mCcsNReqs, usleep_time/1000000.0);
+   }
 
-    while (toread > 0)
-    {
-        timeval beg, end;
-        gettimeofday(&beg, 0);
+   int count = 0;
 
-        long long req = (toread >= request_size) ? request_size : toread;
+   while (toread > 0)
+   {
+      timeval beg, end;
+      gettimeofday(&beg, 0);
 
-        if (offset + req > sInfo->GetSize())
-        {
-            offset = 0;
-        }
+      long long req = (toread >= request_size) ? request_size : toread;
 
-        ++count;
-        if (bVerbose)
-        {
-            printf("%3d Reading %.3f MB at offset %lld\n", count, req/1024.0/1024.0, offset);
-        }
+      if (offset + req > sInfo->GetSize())
+      {
+         offset = 0;
+      }
 
-
-        // AMT
-        if (mNvread) {
-            /*
-            XrdCl::XRootDStatus StatusV;
-            XrdCl::ChunkList chunkVec;
-            XrdCl::VectorReadInfo *vrInfo;
-            int i, nbytes = 0;
-
-            // Copy in the vector (would be nice if we didn't need to do this)
-            //
-            chunkVec.reserve(mNvread);
-            for (i = 0; i < mNvread; i++)
-            {
-                nbytes += readV[i].size;
-                chunkVec.push_back(XrdCl::ChunkInfo(offset + vreq*v,
-                                                    vreq,
-                                                    &buf[0]
-                                                    ));
-            }
-            */
+      ++count;
+      if (bVerbose)
+      {
+         printf("%3d Reading %.3f MB at offset %lld\n", count, req/1024.0/1024.0, offset);
+      }
 
 
-            //            if (bVerbose) printf(" vector read  from new client PLEASE DOUBLE CHECK,  %d x %d \n",mNvread,  vreq);
-            //StatusV = clFile->VectorRead(chunkVec, (void *)0, vrInfo);
-        }
-        else
-        {
-            int res = 0;
-            uint32_t bytes;
-            clFile->Read( offset, (int)req,&buf[0], bytes);
-            req = bytes;
-        }
+      int res = 0;
+      uint32_t bytes;
 
-        offset += req;
-        toread -= req;
+      rh->PreRead(); 
+      //Test
+      pthread_t tid;
+      XrdSysThread::Run(&tid, asyncTest, (void*)rh, 0, "asyncTest");
 
-        gettimeofday(&end, 0);
+       XrdCl::XRootDStatus  s = clFile->Read( offset, (int)req, &buf[0], rh);
+      rh->PostRead();           
+      if (rh->m_detached) {
+         printf("Await detach !!!! \n"); fflush(stdout);
+         exit(1);
+      }
+      else {
+         printf("status OK [%d]", s.IsOK());
+      }
+      req = bytes;
+      offset += req;
+      toread -= req;
 
-        long long sleepy = usleep_time - (1000000ll*(end.tv_sec - beg.tv_sec) + (end.tv_usec - beg.tv_usec));
-        if (sleepy > 0)
-        {
-            if (bVerbose)
-            {
-                printf("    Sleeping for %.1f seconds.\n", sleepy/1000000.0);
-            }
-            usleep(usleep_time);
-        }
-        else
-        {
-            if (bVerbose)
-            {
-                printf("    Not sleeping ... was already %.1f seconds too late.\n", -sleepy/1000000.0);
-            }
-        }
-    }
+      gettimeofday(&end, 0);
+
+      long long sleepy = usleep_time - (1000000ll*(end.tv_sec - beg.tv_sec) + (end.tv_usec - beg.tv_usec));
+      if (sleepy > 0)
+      {
+         if (bVerbose)
+         {
+            printf("    Sleeping for %.1f seconds.\n", sleepy/1000000.0);
+         }
+         usleep(usleep_time);
+      }
+      else
+      {
+         if (bVerbose)
+         {
+            printf("    Not sleeping ... was already %.1f seconds too late.\n", -sleepy/1000000.0);
+         }
+      }
+   }
 }
 
 //==============================================================================
