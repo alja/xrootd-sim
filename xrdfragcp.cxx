@@ -20,6 +20,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <stdlib.h>
+
 #include <fcntl.h>
 #include <sys/time.h>
 
@@ -61,6 +63,7 @@ class App
   int       mCcsTotalTime;
 
   int       mNvread;
+  bool      bRandom;
 
 public:
   App();
@@ -85,7 +88,8 @@ App::App() :
   bVerbose       (false),
   mMaxFragLength (0),
   bCmsClientSim  (false),
-  mNvread(0)
+  mNvread(0),
+  bRandom(false)
 {}
 
 //------------------------------------------------------------------------------
@@ -112,128 +116,136 @@ void next_arg_or_die(lStr_t& args, lStr_i& i, bool allow_single_minus=false)
 
 void App::ParseArgs()
 {
-  lStr_i i = mArgs.begin();
+   lStr_i i = mArgs.begin();
 
-  while (i != mArgs.end())
-  {
-    lStr_i start = i;
+   while (i != mArgs.end())
+   {
+      lStr_i start = i;
 
-    if (*i == "-h" || *i == "-help" || *i == "--help" || *i == "-?")
-    {
-      printf("Arguments: [options] url\n"
-             "\n"
-             "  url              url of file to fetch the fragments from\n"
-             "\n"
-             "  --verbose        be more talkative (only for --cmsclientsim)\n"
-             "\n"
-             "  --prefix <str>   prefix for created fragments, full name will be like:\n"
-             "                     prefix-offset-length\n"
-             "                   default is 'fragment'\n"
-             "                   if '[drop]' is used, nothing is written\n"
-             "\n"
-             "  --frag <offset> <length>\n"
-             "                   get this fragment, several --frag options can be used to\n"
-             "                   retrieve several fragments\n"
-             "\n"
-             "  --cmsclientsim <bytes-to-read> <number-of-requests> <total-time>\n"
-             "                   simulate a client accessing the file with given parameters\n"
-             "\n"
-             "  --vread <int>    number of vreads, usedoly with cmsclientsim\n"
-             );
-      exit(0);
-    }
-    else if (*i == "--verbose")
-    {
-      bVerbose = true;
-      mArgs.erase(start, ++i);
-    }
-    else if (*i == "--prefix")
-    {
-      next_arg_or_die(mArgs, i);
-      mPrefix = *i;
-      mArgs.erase(start, ++i);
-    }
-    else if (*i == "--frag")
-    {
-      next_arg_or_die(mArgs, i);
-      long long offset = atoll(i->c_str());
-      next_arg_or_die(mArgs, i);
-      long long sizell = atoll(i->c_str());
-
-      if (offset < 0)
+      if (*i == "-h" || *i == "-help" || *i == "--help" || *i == "-?")
       {
-        fprintf(stderr, "Error: offset '%lld' must be non-negative.\n", offset);
-        exit(1);
+         printf("Arguments: [options] url\n"
+                "\n"
+                "  url              url of file to fetch the fragments from\n"
+                "\n"
+                "  --verbose        be more talkative (only for --cmsclientsim)\n"
+                "\n"
+                "  --prefix <str>   prefix for created fragments, full name will be like:\n"
+                "                     prefix-offset-length\n"
+                "                   default is 'fragment'\n"
+                "                   if '[drop]' is used, nothing is written\n"
+                "\n"
+                "  --frag <offset> <length>\n"
+                "                   get this fragment, several --frag options can be used to\n"
+                "                   retrieve several fragments\n"
+                "\n"
+                "  --cmsclientsim <bytes-to-read> <number-of-requests> <total-time>\n"
+                "                   simulate a client accessing the file with given parameters\n"
+                "\n"
+                "  --vread <int>    number of vreads, used only with cmsclientsim option\n"
+                "\n"
+                "  --random         random offsets, ised only with cmsclientsim option\n"
+                );
+         exit(0);
       }
-      if (sizell <= 0 || sizell > 1024*1024*1024)
+      else if (*i == "--verbose")
       {
-        fprintf(stderr, "Error: size '%lld' must be larger than zero and smaller than 1GByte.\n", sizell);
-        exit(1);
+         bVerbose = true;
+         mArgs.erase(start, ++i);
       }
-
-      int size = sizell;
-      mFrags.push_back(Frag(offset, size));
-      if (size > mMaxFragLength) mMaxFragLength = size;
-
-      mArgs.erase(start, ++i);
-    }
-    else if (*i == "--cmsclientsim")
-    {
-      next_arg_or_die(mArgs, i);
-      mCcsBytesToRead = atoll(i->c_str());
-      if (mCcsBytesToRead < 0)
+      else if (*i == "--prefix")
       {
-        fprintf(stderr, "Error: bytes-to-read '%lld' must be non-negative.\n", mCcsBytesToRead);
-        exit(1);
+         next_arg_or_die(mArgs, i);
+         mPrefix = *i;
+         mArgs.erase(start, ++i);
       }
-
-      next_arg_or_die(mArgs, i);
-      mCcsNReqs = atoi(i->c_str());
-      if (mCcsNReqs < 0)
+      else if (*i == "--frag")
       {
-        fprintf(stderr, "Error: number-of-requests '%lld' must be non-negative.\n", mCcsNReqs);
-        exit(1);
-      }
+         next_arg_or_die(mArgs, i);
+         long long offset = atoll(i->c_str());
+         next_arg_or_die(mArgs, i);
+         long long sizell = atoll(i->c_str());
 
-      next_arg_or_die(mArgs, i);
-      mCcsTotalTime = atoi(i->c_str());
-      if (mCcsTotalTime < 0)
+         if (offset < 0)
+         {
+            fprintf(stderr, "Error: offset '%lld' must be non-negative.\n", offset);
+            exit(1);
+         }
+         if (sizell <= 0 || sizell > 1024*1024*1024)
+         {
+            fprintf(stderr, "Error: size '%lld' must be larger than zero and smaller than 1GByte.\n", sizell);
+            exit(1);
+         }
+
+         int size = sizell;
+         mFrags.push_back(Frag(offset, size));
+         if (size > mMaxFragLength) mMaxFragLength = size;
+
+         mArgs.erase(start, ++i);
+      }
+      else if (*i == "--cmsclientsim")
       {
-        fprintf(stderr, "Error: total-time '%lld' must be non-negative.\n", mCcsTotalTime);
-        exit(1);
+         next_arg_or_die(mArgs, i);
+         mCcsBytesToRead = atoll(i->c_str());
+         if (mCcsBytesToRead < 0)
+         {
+            fprintf(stderr, "Error: bytes-to-read '%lld' must be non-negative.\n", mCcsBytesToRead);
+            exit(1);
+         }
+
+         next_arg_or_die(mArgs, i);
+         mCcsNReqs = atoi(i->c_str());
+         if (mCcsNReqs < 0)
+         {
+            fprintf(stderr, "Error: number-of-requests '%lld' must be non-negative.\n", mCcsNReqs);
+            exit(1);
+         }
+
+         next_arg_or_die(mArgs, i);
+         mCcsTotalTime = atoi(i->c_str());
+         if (mCcsTotalTime < 0)
+         {
+            fprintf(stderr, "Error: total-time '%lld' must be non-negative.\n", mCcsTotalTime);
+            exit(1);
+         }
+
+         bCmsClientSim = true;
+
+         mArgs.erase(start, ++i);
       }
+      else if (*i == "--vread")
+      {
+         next_arg_or_die(mArgs, i);
+         mNvread = atoi(i->c_str());
+         printf("ReadV enabled. Split reads into %d chunks.\n", mNvread);
 
-      bCmsClientSim = true;
+         mArgs.erase(start, ++i);
+      } 
+      else if (*i == "--random")
+      {
+         bRandom = true;
+         printf("Random offsets enabled.");
+         mArgs.erase(start, ++i);
+      }
+      else
+      {
+         ++i;
+      }
+   }
 
-      mArgs.erase(start, ++i);
-    }
-    else if (*i == "--vread")
-    {
-      next_arg_or_die(mArgs, i);
-      mNvread = atoi(i->c_str());
-      printf("ReadV enabled. Split reads into %d chunks.\n", mNvread);
+   if (mFrags.empty() && ! bCmsClientSim)
+   {
+      fprintf(stderr, "Error: at least one fragment should be requested.\n");
+      exit(1);
+   }
 
-      mArgs.erase(start, ++i);
-    }
-    else
-    {
-      ++i;
-    }
-  }
+   if (mArgs.size() != 1)
+   {
+      fprintf(stderr, "Error: exactly one file should be requested, %d arguments found.\n", (int) mArgs.size());
+      exit(1);
+   }
 
-  if (mFrags.empty() && ! bCmsClientSim)
-  {
-    fprintf(stderr, "Error: at least one fragment should be requested.\n");
-    exit(1);
-  }
-
-  if (mArgs.size() != 1)
-  {
-    fprintf(stderr, "Error: exactly one file should be requested, %d arguments found.\n", (int) mArgs.size());
-    exit(1);
-  }
-
-  mUrl = mArgs.front();
+   mUrl = mArgs.front();
 }
 
 //==============================================================================
@@ -341,127 +353,136 @@ void App::GetChecksum()
 
 void App::CmsClientSim()
 {
-  std::auto_ptr<XrdClient> c( new XrdClient(mUrl.c_str()) );
+   std::auto_ptr<XrdClient> c( new XrdClient(mUrl.c_str()) );
 
-  if ( ! c->Open(0, kXR_async) || c->LastServerResp()->status != kXR_ok)
-  {
-    fprintf(stderr, "Error opening file '%s'.\n", mUrl.c_str());
-    exit(1);
-  }
+   if ( ! c->Open(0, kXR_async) || c->LastServerResp()->status != kXR_ok)
+   {
+      fprintf(stderr, "Error opening file '%s'.\n", mUrl.c_str());
+      exit(1);
+   }
 
-  XrdClientStatInfo si;
-  c->Stat(&si);
+   XrdClientStatInfo si;
+   c->Stat(&si);
 
-  long long request_size = mCcsBytesToRead / mCcsNReqs;
-  if (request_size > 128*1024*1024)
-  {
-    fprintf(stderr, "Error: request size (%lld) larger than 128MB.\n", request_size);
-    exit(1);
-  }
-  if (request_size <= 0)
-  {
-    fprintf(stderr, "Error: request size (%lld) non-positive.\n", request_size);
-    exit(1);
-  }
-  if (request_size > si.size)
-  {
-    fprintf(stderr, "Error: request size (%lld) larger than file size (%lld).\n", request_size, si.size);
-    exit(1);
-  }
+   long long request_size = mCcsBytesToRead / mCcsNReqs;
+   if (request_size > 128*1024*1024)
+   {
+      fprintf(stderr, "Error: request size (%lld) larger than 128MB.\n", request_size);
+      exit(1);
+   }
+   if (request_size <= 0)
+   {
+      fprintf(stderr, "Error: request size (%lld) non-positive.\n", request_size);
+      exit(1);
+   }
+   if (request_size > si.size)
+   {
+      fprintf(stderr, "Error: request size (%lld) larger than file size (%lld).\n", request_size, si.size);
+      exit(1);
+   }
 
-  long long usleep_time = 1000000 * ((double)mCcsTotalTime / mCcsNReqs);
-  if (usleep_time < 0)
-  {
-    fprintf(stderr, "Error: sleeptime (%lldmus) negative.\n", usleep_time);
-    exit(1);
-  }
+   long long usleep_time = 1000000 * ((double)mCcsTotalTime / mCcsNReqs);
+   if (usleep_time < 0)
+   {
+      fprintf(stderr, "Error: sleeptime (%lldmus) negative.\n", usleep_time);
+      exit(1);
+   }
 
-  std::vector<char> buf;
-  buf.reserve(request_size);
+   std::vector<char> buf;
+   buf.reserve(request_size);
 
-  long long offset = 0;
-  long long toread = mCcsBytesToRead;
+   long long offset = 0;
+   long long toread = mCcsBytesToRead;
 
-  int* vecReq = 0;
-  kXR_int64* vecOff = 0;
-  if (mNvread) {
-     vecReq = new int[mNvread];
-     vecOff = new kXR_int64[mNvread];
-  }
+   int* vecReq = 0;
+   kXR_int64* vecOff = 0;
+   if (mNvread) {
+      vecReq = new int[mNvread];
+      vecOff = new kXR_int64[mNvread];
+   }
 
-  if (bVerbose)
-  {
-    printf("Starting CmsClientSim, %f MB to read in about %lld requests spaced by %.1f seconds.\n",
-           toread/1024.0/1024.0, mCcsNReqs, usleep_time/1000000.0);
-  }
+   if (bVerbose)
+   {
+      printf("Starting CmsClientSim, %f MB to read in about %lld requests spaced by %.1f seconds.\n",
+             toread/1024.0/1024.0, mCcsNReqs, usleep_time/1000000.0);
+   }
 
-  int count = 0;
+   int count = 0;
 
-  while (toread > 0)
-  {
-    timeval beg, end;
-    gettimeofday(&beg, 0);
+   while (toread > 0)
+   {
+      timeval beg, end;
+      gettimeofday(&beg, 0);
 
-    long long req = (toread >= request_size) ? request_size : toread;
+      long long req = (toread >= request_size) ? request_size : toread;
 
-    if (offset + req > si.size)
-    {
-      offset = 0;
-    }
+      if (bRandom) {
+         int rb = rand() % int(si.size/request_size);
+          if (bVerbose) printf("Took random block [%d]/%d \n", rb, si.size/request_size);
+         offset = rb* request_size;
+      }
+      else {
+         offset = count * request_size;
+      }
 
-    ++count;
-    if (bVerbose)
-    {
-      printf("%3d Reading %.3f MB at offset %lld\n", count, req/1024.0/1024.0, offset);
-    }
+      if (offset + req > si.size)
+      {
+         offset = 0;
+      }
 
-
-    // AMT
-    if (mNvread) {
-
-       int vreq = req/mNvread;
-       for (int v=0; v<mNvread; ++v) {
-          vecOff[v] = offset + vreq*v; 
-          vecReq[v] = vreq;
-          //  printf("[%d] readv req off = %lld , size = %d",v, vecOff[v],  vecReq[v]);
-       }
-
-       if (bVerbose) printf(" vector read  from client,  %d x %d \n",mNvread,  vreq);
-       c->ReadV(&buf[0], vecOff, vecReq, mNvread);
-    }
-    else
-    {
-       printf("plain read  from client req = %d \n", req);
-       c->Read(&buf[0], offset, req);
-    }
-
-    if (req < 0) {
-       printf("Read exited with error %d \n", req);
-       exit(1);
-    }
-
-    offset += req;
-    toread -= req;
-
-    gettimeofday(&end, 0);
-
-    long long sleepy = usleep_time - (1000000ll*(end.tv_sec - beg.tv_sec) + (end.tv_usec - beg.tv_usec));
-    if (sleepy > 0)
-    {
+      ++count;
       if (bVerbose)
       {
-        printf("    Sleeping for %.1f seconds.\n", sleepy/1000000.0);
+         printf("%3d Reading %.3f MB at offset %lld\n", count, req/1024.0/1024.0, offset);
       }
-      usleep(usleep_time);
-    }
-    else
-    {
-      if (bVerbose)
+
+
+      // AMT
+      if (mNvread) {
+
+         int vreq = req/mNvread;
+         for (int v=0; v<mNvread; ++v) {
+            vecOff[v] = offset + vreq*v; 
+            vecReq[v] = vreq;
+            //  printf("[%d] readv req off = %lld , size = %d",v, vecOff[v],  vecReq[v]);
+         }
+
+         if (bVerbose) printf(" vector read  from client,  %d x %d \n",mNvread,  vreq);
+         c->ReadV(&buf[0], vecOff, vecReq, mNvread);
+      }
+      else
       {
-        printf("    Not sleeping ... was already %.1f seconds too late.\n", -sleepy/1000000.0);
+         printf("plain read  from client %lld@%d \n", offset, req);
+         c->Read(&buf[0], offset, req);
       }
-    }
-  }
+
+      if (req < 0) {
+         printf("Read exited with error %d \n", req);
+         exit(1);
+      }
+
+      // offset += req;
+      toread -= req;
+
+      gettimeofday(&end, 0);
+
+      long long sleepy = usleep_time - (1000000ll*(end.tv_sec - beg.tv_sec) + (end.tv_usec - beg.tv_usec));
+      if (sleepy > 0)
+      {
+         if (bVerbose)
+         {
+            printf("    Sleeping for %.1f seconds.\n", sleepy/1000000.0);
+         }
+         usleep(usleep_time);
+      }
+      else
+      {
+         if (bVerbose)
+         {
+            printf("    Not sleeping ... was already %.1f seconds too late.\n", -sleepy/1000000.0);
+         }
+      }
+   }
 }
 
 //==============================================================================
