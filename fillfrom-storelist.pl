@@ -15,6 +15,7 @@ my $jobs   = "0";
 my $file    = "";
 my $verbose = "";
 my $vread   = "";
+my $randfrag   = 0;
 my $ordered   = 0;
 my $newcl= 0;
 my $sleepTime = 2;
@@ -33,6 +34,7 @@ my $result = GetOptions ("server=s" => \$server,
                        "list_offset=i"   => \$list_offset,
                        "list_size=i"   => \$list_size,
                        "newcl"   => \$newcl,
+                       "randfrag"   => \$randfrag,
                        "ordered"  => \$ordered,                  
                        "verbose"  => \$verbose);
 
@@ -56,6 +58,11 @@ if ($verbose) {
 if($vread) {
   print("vread enabled\n");
   $vread=" --vread $vread";
+}
+
+if ($randfrag){
+  print("random ragment offsets enabled\n");
+  $randfrag ="--random";
 }
 
 my $fragcpcmd;
@@ -86,10 +93,10 @@ for (my $count = 0; $count < $jobs; $count++) {
 
   my $cmd;
   
-  $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose root://$server//store/".$line." &";
+  $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose $randfrag root://$server//store/".$line." &";
 
   print (localtime, " $cmd \n");
- # system(" $cmd");
+  system(" $cmd");
   sleep($sleepTime);
 #   last;
 }
