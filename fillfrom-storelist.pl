@@ -21,6 +21,8 @@ my $newcl= 0;
 my $sleepTime = 2;
 my $list_offset = 0;
 my $list_size = 0;
+my $tried = "";
+
 
 
 my $sim_path = "$ENV{HOME}/xrd/sim";
@@ -35,7 +37,8 @@ my $result = GetOptions ("server=s" => \$server,
                        "list_size=i"   => \$list_size,
                        "newcl"   => \$newcl,
                        "randfrag"   => \$randfrag,
-                       "ordered"  => \$ordered,                  
+                       "ordered"  => \$ordered,      
+                       "tried=s"  => \$tried,                  
                        "verbose"  => \$verbose);
 
 
@@ -65,6 +68,9 @@ if ($randfrag){
   $randfrag ="--random";
 }
 
+if ($tried){
+  $tried = "?tried=".$tried;
+}
 my $fragcpcmd;
 if ($newcl) {
   my $ldpath = "/home/alja/xrd/bld/ixrd/lib64/";
@@ -91,12 +97,13 @@ for (my $count = 0; $count < $jobs; $count++) {
   my $line =$array[$line_idx]; #rand @array];
   chomp $line;
 
+$line=~s/\s+$//;
   my $cmd;
-  
-  $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose $randfrag root://$server//store/".$line." &";
+  print("[$line]\n");
+  $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose $randfrag root://$server//store/".$line.$tried." &";
 
   print (localtime, " $cmd \n");
-  system(" $cmd");
+ # system(" $cmd");
   sleep($sleepTime);
 #   last;
 }
