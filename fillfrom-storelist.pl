@@ -99,11 +99,11 @@ for (my $count = 0; $count < $jobs; $count++) {
 
 $line=~s/\s+$//;
   my $cmd;
-  print("[$line]\n");
+
   $cmd = "$fragcpcmd --cmsclientsim 720000000 300 3000 $vread $verbose $randfrag root://$server//store/".$line.$tried." &";
 
   print (localtime, " $cmd \n");
- # system(" $cmd");
+  system(" $cmd");
   sleep($sleepTime);
 #   last;
 }
