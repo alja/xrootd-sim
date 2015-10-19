@@ -9,11 +9,8 @@
 
 
 #include "XrdCl/XrdClFile.hh"
-#include "XrdCl/XrdClXRootDResponses.hh"
-#include "XrdSys/XrdSysPthread.hh"
-#include "XrdSys/XrdSysTimer.hh"
 
-#include <pcrecpp.h>
+// #include <pcrecpp.h>
 
 #include <memory>
 #include <string>
@@ -45,65 +42,19 @@ struct Frag
 typedef std::list<Frag>   lFrag_t;
 typedef lFrag_t::iterator lFrag_i;
 
+//==============================================================================
 
-
-class DirectResponseHandler : public XrdCl::ResponseHandler
+struct VRead
 {
-public:
-   XrdSysCondVar  m_cond;
-   bool           m_reading;
-   bool           m_detached;
+    int   fNChunks; 
+    int   fChunkSpaces;
+    int   fChunkSize;
 
-   DirectResponseHandler() :
-      m_cond(0), m_reading(false), m_detached(false)
-   {}
-
-   // Lock under lock? Depends if need more ops
-   void Detach()
-   {
-      m_cond.Lock();
-      // lock (or be locked)
-      m_detached = true;
-
-      if (m_reading)
-         m_cond.Signal();
-
-      m_cond.UnLock();
-   }
-
-   void PreRead()
-   {
-      m_cond.Lock();
-      m_reading = true;
-   }
-
-   void PostRead()
-   {
-      m_cond.Wait();
-      m_reading = false;
-      m_cond.UnLock();
-   }
-
-   void HandleResponse(XrdCl::XRootDStatus *status,
-                       XrdCl::AnyObject    *response)
-   {
-      bool auto_destruct;
-      {
-         XrdSysCondVarHelper _lck(m_cond);
-
-         m_cond.Signal();
-
-         delete status;
-         delete response;
-
-         auto_destruct = m_detached;
-      }
-      if (auto_destruct)
-         delete this;
-   }
+    VRead(int Nc, int cspace, int csize) : fNChunks(Nc), fChunkSpaces(cspace), fChunkSize(csize) {}
 };
 
-
+typedef std::list<VRead>   lVRead_t;
+typedef lVRead_t::iterator lVRead_i;
 //==============================================================================
 
 class App
@@ -117,14 +68,13 @@ class App
   bool      bVerbose;
 
   lFrag_t   mFrags;
+  lVRead_t   mVReads;
   int       mMaxFragLength;
 
   bool      bCmsClientSim;
   long long mCcsBytesToRead;
   int       mCcsNReqs;
   int       mCcsTotalTime;
-
-  int       mNvread;
 
 public:
   App();
@@ -134,13 +84,13 @@ public:
 
   void Run();
 
-
   // Various modes
   
   void GetFrags();
   void GetChecksum();
   void CmsClientSim();
-};
+  void DoVReads();
+}; 
 
 //==============================================================================
 
@@ -148,8 +98,7 @@ App::App() :
   mPrefix        ("fragment"),
   bVerbose       (false),
   mMaxFragLength (0),
-  bCmsClientSim  (false),
-  mNvread(0)
+  bCmsClientSim  (false)
 {}
 
 //------------------------------------------------------------------------------
@@ -202,7 +151,7 @@ void App::ParseArgs()
              "  --cmsclientsim <bytes-to-read> <number-of-requests> <total-time>\n"
              "                   simulate a client accessing the file with given parameters\n"
              "\n"
-             "  --vread <int>    number of vreads, usedoly with cmsclientsim\n"
+             "  --vread <n-chunks> <chunk-spacing> <chunk-size>\n"
              );
       exit(0);
     }
@@ -274,9 +223,14 @@ void App::ParseArgs()
     else if (*i == "--vread")
     {
       next_arg_or_die(mArgs, i);
-      mNvread = atoi(i->c_str());
-      printf("ReadV enabled. Split reads into %d chunks.\n", mNvread);
+      int nchunks = atoi(i->c_str());
+      next_arg_or_die(mArgs, i);
+      int cspace = atoi(i->c_str());
+      next_arg_or_die(mArgs, i);
+      int csize = atoi(i->c_str());
 
+      printf("ReadV enabled.\n");
+      mVReads.push_back(VRead(nchunks, cspace, csize));
       mArgs.erase(start, ++i);
     }
     else
@@ -285,7 +239,7 @@ void App::ParseArgs()
     }
   }
 
-  if (mFrags.empty() && ! bCmsClientSim)
+  if ((mFrags.empty() && mVReads.empty()) && ! bCmsClientSim)
   {
     fprintf(stderr, "Error: at least one fragment should be requested.\n");
     exit(1);
@@ -308,207 +262,263 @@ void App::Run()
   {
     CmsClientSim();
   }
-  else
+  if (!mFrags.empty())
   {
     GetFrags();
+  }
+
+  if (!mVReads.empty())
+  {
+    DoVReads();
   }
 }
 
 //==============================================================================
 
 void App::GetFrags()
-{/*
-  std::auto_ptr<XrdClient> c( new XrdClient(mUrl.c_str()) );
+{
+    using namespace XrdCl;
 
-  if ( ! c->Open(0, kXR_async) || c->LastServerResp()->status != kXR_ok)
-  {
-    fprintf(stderr, "Error opening file '%s'.\n", mUrl.c_str());
-    exit(1);
-  }
-
-  XrdClientStatInfo si;
-  c->Stat(&si);
-
-  for (lFrag_i i = mFrags.begin(); i != mFrags.end(); ++i)
-  {
-    if (i->fOffset + i->fLength > si.size)
-    {
-      fprintf(stderr, "Error: requested chunk not in file, file-size=%lld.\n", si.size);
-      exit(1);
+    File * clFile = new XrdCl::File();
+    OpenFlags::Flags XOflags =  XrdCl::OpenFlags::Read;
+    XRootDStatus Status =  clFile->Open(mUrl, XOflags, Access::None);
+    if (Status.IsOK() == false) {
+       printf("Error opennig file %s\n", mUrl.c_str());
+       exit(1);
     }
-  }
-
-  std::vector<char> buf;
-  buf.reserve(mMaxFragLength);
-
-  int fnlen = mPrefix.length() + 32;
-  std::vector<char> fn;
-  fn.reserve(fnlen);
-
-  for (lFrag_i i = mFrags.begin(); i != mFrags.end(); ++i)
-  {
-    int n = snprintf(&fn[0], fnlen, "%s-%lld-%d", mPrefix.c_str(), i->fOffset, i->fLength);
-    if (n >= fnlen)
-    {
-      fprintf(stderr, "Internal error: file-name buffer too small.\n");
-      exit(1);
+    else {
+       printf("success \n");
     }
 
-    int fd = open(&fn[0], O_WRONLY | O_CREAT | O_TRUNC,
-                          S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    if (fd == -1)
-    {
-      fprintf(stderr, "Error opening output file '%s': %s\n", &fn[0], strerror(errno));
-      exit(1);
+
+    XrdCl::StatInfo *sInfo = 0;
+    XRootDStatus StatusS = clFile->Stat(true, sInfo);
+    if (!Status.IsOK()) {
+       printf("Can't get status for %s \n", mUrl.c_str());
+       exit(1);
     }
 
-    c->Read(&buf[0], i->fOffset, i->fLength);
+    // check fragment size is not over size
+    for (lFrag_i i = mFrags.begin(); i != mFrags.end(); ++i)
+    {
+       if (i->fOffset + i->fLength > sInfo->GetSize())
+       {
+          fprintf(stderr, "Error: requested chunk not in file, file-size=%lld.\n", sInfo->GetSize());
+          exit(1);
+       }
+    }
 
-    write(fd, &buf[0], i->fLength);
+    std::vector<char> buf;
+    buf.reserve(mMaxFragLength);
 
-    close(fd);
-    }*/
+    int fnlen = mPrefix.length() + 32;
+    std::vector<char> fn;
+    fn.reserve(fnlen);
 
+    for (lFrag_i i = mFrags.begin(); i != mFrags.end(); ++i)
+    {
+       int n = snprintf(&fn[0], fnlen, "%s-%lld-%d", mPrefix.c_str(), i->fOffset, i->fLength);
+       if (n >= fnlen)
+       {
+          fprintf(stderr, "Internal error: file-name buffer too small.\n");
+          exit(1);
+       }
+
+       int fd = open(&fn[0], O_WRONLY | O_CREAT | O_TRUNC,
+                     S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+       if (fd == -1)
+       {
+          fprintf(stderr, "Error opening output file '%s': %s\n", &fn[0], strerror(errno));
+          exit(1);
+       }
+
+       //       c->Read(&buf[0], i->fOffset, i->fLength);
+       uint32_t bytes;
+       XrdCl::XRootDStatus status = clFile->Read( i->fOffset, i->fLength, &buf[0], bytes);
+       if (!status.IsOK()) {
+               printf("%s %s\n", mUrl.c_str(), status.GetErrorMessage().c_str());
+       }
+
+       write(fd, &buf[0], i->fLength);
+
+       close(fd);
+    }
+}
+
+//------------------------------------------------------------------------------
+
+void App::GetChecksum()
+{
 
     printf( "AMT no imeple,\n");
 }
 
 //------------------------------------------------------------------------------
 
-void* asyncTest(void* v)
-{
-   DirectResponseHandler* rh = (DirectResponseHandler*)v;
-   XrdSysTimer::Wait(10);
-   printf("ASYNC TEST !!!!!\n");
-   rh->Detach();
-}
-
 void App::CmsClientSim()
 {
-   using namespace XrdCl;
+    using namespace XrdCl;
 
-   DirectResponseHandler* rh = new DirectResponseHandler();
+    File * clFile = new XrdCl::File();
+    OpenFlags::Flags XOflags =  XrdCl::OpenFlags::Read;
+    XRootDStatus Status =  clFile->Open(mUrl, XOflags);
+    if (Status.IsOK() == false) {
+       printf("Error opennig file %s\n", mUrl.c_str());
+    }
 
-   File * clFile = new XrdCl::File();
-   OpenFlags::Flags XOflags =  XrdCl::OpenFlags::Read;
-   XRootDStatus Status =  clFile->Open(mUrl, XOflags);
-   if (Status.IsOK() == false) {
-      printf("Error opennig file %s\n", mUrl.c_str());
-   }
-
-   XrdCl::StatInfo *sInfo = 0;
-   XRootDStatus StatusS = clFile->Stat(true, sInfo);
-   if (!Status.IsOK()) {
-      printf("Can't get status for %s \n", mUrl.c_str());
-      exit(1);
-   }
-
- 
-
-   long long request_size = mCcsBytesToRead / mCcsNReqs;
-   if (request_size > 128*1024*1024)
-   {
-      fprintf(stderr, "Error: request size (%lld) larger than 128MB.\n", request_size);
-      exit(1);
-   }
-   if (request_size <= 0)
-   {
-      fprintf(stderr, "Error: request size (%lld) non-positive.\n", request_size);
-      exit(1);
-   }
-   if (request_size > sInfo->GetSize())
-   {
-      fprintf(stderr, "Error: request size (%lld) larger than file size (%lld).\n", request_size, sInfo->GetSize());
-      exit(1);
-   }
-
-   long long usleep_time = 1000000 * ((double)mCcsTotalTime / mCcsNReqs);
-   if (usleep_time < 0)
-   {
-      fprintf(stderr, "Error: sleeptime (%lldmus) negative.\n", usleep_time);
-      exit(1);
-   }
-
-   std::vector<char> buf;
-   buf.reserve(request_size);
-
-   long long offset = 0;
-   long long toread = mCcsBytesToRead;
-
-   int* vecReq = 0;
-   kXR_int64* vecOff = 0;
-   if (mNvread) {
-      vecReq = new int[mNvread];
-      vecOff = new kXR_int64[mNvread];
-   }
-
-   // if (bVerbose)
-   {
-      printf("Starting CmsClientSimNew, %f MB to read in about %lld requests spaced by %.1f seconds.\n",
-             toread/1024.0/1024.0, mCcsNReqs, usleep_time/1000000.0);
-   }
-
-   int count = 0;
-
-   while (toread > 0)
-   {
-      timeval beg, end;
-      gettimeofday(&beg, 0);
-
-      long long req = (toread >= request_size) ? request_size : toread;
-
-      if (offset + req > sInfo->GetSize())
-      {
-         offset = 0;
-      }
-
-      ++count;
-      if (bVerbose)
-      {
-         printf("%3d Reading %.3f MB at offset %lld\n", count, req/1024.0/1024.0, offset);
-      }
+    XrdCl::StatInfo *sInfo = 0;
+    XRootDStatus StatusS = clFile->Stat(true, sInfo);
+    if (!Status.IsOK()) {
+       printf("Can't get status for %s \n", mUrl.c_str());
+       exit(1);
+    }
 
 
-      int res = 0;
-      uint32_t bytes;
+    long long request_size = mCcsBytesToRead / mCcsNReqs;
+    if (request_size > 128*1024*1024)
+    {
+        fprintf(stderr, "Error: request size (%lld) larger than 128MB.\n", request_size);
+        exit(1);
+    }
+    if (request_size <= 0)
+    {
+        fprintf(stderr, "Error: request size (%lld) non-positive.\n", request_size);
+        exit(1);
+    }
+    if (request_size > sInfo->GetSize())
+    {
+        fprintf(stderr, "Error: request size (%lld) larger than file size (%lld).\n", request_size, sInfo->GetSize());
+        exit(1);
+    }
 
-      rh->PreRead(); 
-      //Test
-      pthread_t tid;
-      XrdSysThread::Run(&tid, asyncTest, (void*)rh, 0, "asyncTest");
+    long long usleep_time = 1000000 * ((double)mCcsTotalTime / mCcsNReqs);
+    if (usleep_time < 0)
+    {
+        fprintf(stderr, "EXIT ALJS Error: sleeptime (%lldmus) negative.\n", usleep_time);
+        clFile->Close();
+        exit(1);
+    }
 
-       XrdCl::XRootDStatus  s = clFile->Read( offset, (int)req, &buf[0], rh);
-      rh->PostRead();           
-      if (rh->m_detached) {
-         printf("Await detach !!!! \n"); fflush(stdout);
-         exit(1);
-      }
-      else {
-         printf("status OK [%d]", s.IsOK());
-      }
-      req = bytes;
-      offset += req;
-      toread -= req;
+    std::vector<char> buf;
+    buf.reserve(request_size);
 
-      gettimeofday(&end, 0);
+    long long offset = 0;
+    long long toread = mCcsBytesToRead;
 
-      long long sleepy = usleep_time - (1000000ll*(end.tv_sec - beg.tv_sec) + (end.tv_usec - beg.tv_usec));
-      if (sleepy > 0)
-      {
-         if (bVerbose)
-         {
-            printf("    Sleeping for %.1f seconds.\n", sleepy/1000000.0);
-         }
-         usleep(usleep_time);
-      }
-      else
-      {
-         if (bVerbose)
-         {
-            printf("    Not sleeping ... was already %.1f seconds too late.\n", -sleepy/1000000.0);
-         }
-      }
-   }
+
+    if (bVerbose)
+    {
+        printf("Starting CmsClientSimNew, %f MB to read in about %lld requests spaced by %.1f seconds.\n",
+               toread/1024.0/1024.0, mCcsNReqs, usleep_time/1000000.0);
+    }
+
+    int count = 0;
+
+    while (toread > 0)
+    {
+        timeval beg, end;
+        gettimeofday(&beg, 0);
+
+        long long req = (toread >= request_size) ? request_size : toread;
+
+        if (offset + req > sInfo->GetSize())
+        {
+            offset = 0;
+        }
+
+        ++count;
+        if (bVerbose)
+        {
+            printf("%3d Reading %.3f MB at offset %lld\n", count, req/1024.0/1024.0, offset);
+        }
+
+
+        else
+        {
+            int res = 0;
+            uint32_t bytes;
+            XrdCl::XRootDStatus status = clFile->Read( offset, (int)req,&buf[0], bytes);
+
+            if (!status.IsOK()) {
+               printf("error read [%lld@%d = %d] %s status = %s, code = %d\n", offset, req, bytes, mUrl.c_str(), status.GetErrorMessage().c_str(), status.code);
+            }
+
+            if (bytes < 0) {
+               printf("EXIT !!!read error %d %s, exit %s\n", status.code, status.ToString().c_str(), mUrl.c_str());
+               clFile->Close();
+               exit(1);
+            }
+            else
+               req = bytes;
+        }
+
+        offset += req;
+        toread -= req;
+
+        gettimeofday(&end, 0);
+
+        long long sleepy = usleep_time - (1000000ll*(end.tv_sec - beg.tv_sec) + (end.tv_usec - beg.tv_usec));
+        if (sleepy > 0)
+        {
+            if (bVerbose)
+            {
+                printf("    Sleeping for %.1f seconds.\n", sleepy/1000000.0);
+            }
+            usleep(usleep_time);
+        }
+        else
+        {
+            if (bVerbose)
+            {
+                printf("    Not sleeping ... was already %.1f seconds too late.\n", -sleepy/1000000.0);
+            }
+        }
+    }
+}
+
+
+
+//==============================================================================
+
+void App::DoVReads()
+{
+    using namespace XrdCl;
+
+    File * clFile = new XrdCl::File();
+    OpenFlags::Flags XOflags =  XrdCl::OpenFlags::Read;
+    XRootDStatus Status =  clFile->Open(mUrl, XOflags, Access::None);
+    if (Status.IsOK() == false) {
+       printf("Error opennig file %s\n", mUrl.c_str());
+       exit(1);
+    }
+    else {
+       printf("success \n");
+    }
+
+
+    XrdCl::StatInfo *sInfo = 0;
+    XRootDStatus StatusS = clFile->Stat(true, sInfo);
+    if (!Status.IsOK()) {
+       printf("Can't get status for %s \n", mUrl.c_str());
+       exit(1);
+    }
+
+    
+    for (lVRead_i i = mVReads.begin(); i != mVReads.end(); ++i)
+    {
+        ChunkList chunkList;
+        for (int v=0; v < i->fNChunks;  ++v) {
+            ChunkInfo ci;
+            ci.buffer = malloc(i->fChunkSize);
+            ci.offset = v * (i->fChunkSpaces + i->fChunkSize);
+            ci.length = i->fChunkSize;
+            chunkList.push_back(ci);
+        }
+        VectorReadInfo* ri = 0;
+        XRootDStatus status = clFile->VectorRead(chunkList, 0, ri);
+        printf("VRead [i]  status %s \n", status.ToString().c_str());
+    }
+
 }
 
 //==============================================================================
@@ -516,7 +526,7 @@ void App::CmsClientSim()
 
 int main(int argc, char *argv[])
 {
-  std::cerr << "Xrootd Version === " XrdVERSION  << std::endl;
+
 if (!strncmp(XrdVERSION, "v3",2 )) {
 printf("inproper version \n");
 exit(1);
