@@ -6,12 +6,12 @@ use File::Basename;
 use POSIX qw(WNOHANG);
 
 if (@ARGV < 2) {
-  print STDERR "Usage: ./heal-parallel.pl  --file=all_files.txt  --jobs=3 --N_max=4 --jobsOff=12 --server=xrd-cache-1.t2.ucsd.edu:2020\n";
+  print STDERR "Usage: ./heal-parallel.pl --mode=1 --file=all_files.txt  --jobs=3 --jobsOff=12 --server=xrd-cache-1.t2.ucsd.edu:2020\n";
     exit 1;
 }
 
 
-my $N_max = 3;
+my $N_max = 64;
 my $N = 0;
 my %pmap;
 my $current_line = 0;
@@ -23,14 +23,14 @@ my $server  = "";
 my $jobs   = 0;
 my $jobsOff   = 0;
 my $verbose = "";
-
+my $mode = 0;
 
 
 my $result = GetOptions ( "file=s"    => \$file,
                           "server=s"  => \$server,
                           "jobs=i"    => \$jobs,
                           "jobsOff=i" => \$jobsOff,
-                          "N_max=i"   => \$N_max,
+                          "mode=i"   => \$mode,
                           "verbose"   => \$verbose);
 
 printf "list offset $jobsOff\n";
@@ -41,12 +41,8 @@ my @array=<FILE>;
 if (!$jobs)
 {
   printf("Warning njobs not defined \n");
-  $jobs = @array;
-}
-
-if ($N_max > 100) {
-    printf("Number of parallel processes to hig\n");
-    exit;
+  exit;
+#  $jobs = @array;
 }
 
 $current_line = $jobsOff;
@@ -55,6 +51,7 @@ if ( $last_line > @array ) {
   $last_line = @array;
 }
 print "currentline = $current_line, lastline = $last_line \n";
+
 
 
 close FILE;
@@ -117,14 +114,24 @@ sub run_child
     open STDOUT, ">&XXX";
     open STDERR, ">&XXX";
     }
+    
+    # URL
+    my $line =$array[$current_line];
+    if ( $mode)
+    {
+      my $p = $array[$current_line]; chomp $p;
+       print("ffff____ $p _____4444\n");
 
-    my $line =$array[$current_line]; 
-    chomp $line;
-    my $pcmd = "./get-frag-from-path.pl $line $server";
-    print("run_child() $pcmd\n");
-    exec($pcmd);
-  }
+       exec("xrdcp -f root://$server/$p /dev/null");
+    }
+    else
+    {
+       exec("./heal-path.pl $array[$current_line] $server");
+    }
+      
+   }
 }
+
 
 
 
@@ -135,7 +142,7 @@ sub make_new_children
   while ($N < $N_max && $current_line < $last_line)
   {
     run_child();
-    print("run child $N (line $current_line)\n");
+    print("run child $current_line\n");
   }
 }
 
@@ -149,7 +156,7 @@ $SIG{CHLD} = &sig_child_handler;
 while ( $current_line < $last_line )
 {
   make_new_children();
-  sleep 5; # will get interrupted on signal!
+  sleep 100; # will get interrupted on signal!
   reap_children();
 }
 
@@ -157,7 +164,6 @@ while (%pmap)
 {
   my $size = keys %pmap;
   print "Waiting on $size processes to finish ...\n";
-  foreach(keys %pmap) { print "$_ / $pmap{$_}\n"; }
   sleep 10;
   reap_children();
 }
